@@ -36,6 +36,7 @@ import org.apache.lucene.search.Query;
 import org.apache.lucene.search.ScoreMode;
 import org.apache.lucene.search.Scorer;
 import org.apache.lucene.search.Weight;
+import org.apache.lucene.util.PriorityQueue;
 
 /**
  * Base class for range faceting.
@@ -226,9 +227,37 @@ abstract class RangeFacetCounts extends Facets {
     if (path.length != 0) {
       throw new IllegalArgumentException("path.length should be 0");
     }
-    LabelAndValue[] labelValues = new LabelAndValue[counts.length];
+    int resultSize = Math.min(topN, counts.length);
+
+    PriorityQueue<LabelAndValue> pq =
+        new PriorityQueue<>(resultSize) {
+          @Override
+          protected boolean lessThan(LabelAndValue a, LabelAndValue b) {
+            int cmp = Integer.compare(a.value.intValue(), b.value.intValue());
+            if (cmp == 0) {
+              cmp = b.label.compareTo(a.label);
+            }
+            return cmp < 0;
+          }
+        };
+
     for (int i = 0; i < counts.length; i++) {
-      labelValues[i] = new LabelAndValue(ranges[i].label, counts[i]);
+      if (pq.size() < resultSize) {
+        pq.add(new LabelAndValue(ranges[i].label, counts[i]));
+      } else {
+        int topValue = pq.top().value.intValue();
+        if (counts[i] > topValue
+            || (counts[i] == topValue && ranges[i].label.compareTo(pq.top().label) < 0)) {
+          pq.updateTop(new LabelAndValue(ranges[i].label, counts[i]));
+        }
+      }
+    }
+
+    resultSize = pq.size();
+    LabelAndValue[] labelValues = new LabelAndValue[resultSize];
+    while (pq.size() > 0) {
+      resultSize--;
+      labelValues[resultSize] = pq.pop();
     }
     return new FacetResult(dim, path, totCount, labelValues, labelValues.length);
   }
